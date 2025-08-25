@@ -1,0 +1,75 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Parameters:
+  BRANCH:
+    Type: String
+  REGION:
+    Type: String
+  BLOCK:
+    Type: String
+  IMAGE:
+    Type: String
+  DNSName:
+    Type: String
+  R53HostedZone:
+    Type: String
+  SSLCertificate:
+    Type: String
+
+Globals:
+  Function:
+    Timeout: 600
+    Tracing: Active
+    MemorySize: 256
+    Environment:
+      Variables:
+        ENV: AWS
+        REGION: !Ref REGION
+        BRANCH: !Ref BRANCH
+        BLOCK: !Ref BLOCK
+        USER_TABLE_NAME: !ImportValue UserTableName
+        BILLING_TABLE_NAME: !ImportValue BillingTableName
+
+  Api:
+    Cors:
+      AllowMethods: "'*'"
+      AllowHeaders: "'*'"
+      AllowOrigin: "'*'"
+Resources:
+  DailyLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "${AWS::StackName}-daily"
+      RetentionInDays: 7
+  Daily:
+    Type: AWS::Serverless::Function
+    Properties:
+      LoggingConfig:
+        ApplicationLogLevel: 'INFO'
+        LogGroup: !Ref DailyLogGroup
+        LogFormat: 'JSON'
+        SystemLogLevel: 'INFO'
+      FunctionName: !Sub "${AWS::StackName}-daily"
+      PackageType: Image
+      ImageUri: !Ref IMAGE
+      ImageConfig:
+        Command: ["daily.lambda_handler"]
+      Policies:
+        - Statement:
+          - Sid: KMS
+            Effect: Allow
+            Action:
+            - kms:decrypt
+            Resource: '*'
+        - Statement:
+          - Sid: DynamoDB
+            Effect: Allow
+            Action:
+            - dynamodb:*
+            Resource: '*'
+      Events:
+        Schedule:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 day)

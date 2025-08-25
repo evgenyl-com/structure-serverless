@@ -1,0 +1,181 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Parameters:
+  BRANCH:
+    Type: String
+  REGION:
+    Type: String
+  BLOCK:
+    Type: String
+  IMAGE:
+    Type: String
+  COMPANY:
+    Type: String
+  SSL:
+    Type: String
+  DNS:
+    Type: String
+
+Globals:
+  Function:
+    Timeout: 10
+    Tracing: Active
+    MemorySize: 512
+    Environment:
+      Variables:
+        ENV: AWS
+        REGION: !Ref REGION
+        BRANCH: !Ref BRANCH
+        BLOCK: !Ref BLOCK
+        REQUEST_LIMIT_TABLE: !Ref RequestLimit
+  Api:
+    Cors:
+      AllowMethods: "'*'"
+      AllowHeaders: "'*'"
+      AllowOrigin: "'*'"
+Resources:
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "${COMPANY}-user-pool"
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      EmailVerificationSubject: "<cognito verification subject>"
+      EmailVerificationMessage: "<cognito verification message>: {####}"
+      EmailConfiguration:
+        EmailSendingAccount: DEVELOPER
+        From: !Sub "no-reply@${DNS}"
+        SourceArn: !Sub "arn:aws:ses:${REGION}:${AWS::AccountId}:identity/${DNS}"
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: false
+        InviteMessageTemplate:
+          EmailSubject: "<cognito invite email subject>"
+          EmailMessage: "<cognito invite email message>: username is {username} and temporary password is {####}."
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    DependsOn: GoogleIdentityProvider
+    Properties:
+      ClientName: !Sub "${COMPANY}-client"
+      UserPoolId: !Ref UserPool
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - email
+        - openid
+        - profile
+      CallbackURLs:
+        - https://www.example.com/callback
+      LogoutURLs:
+        - https://www.example.com/logout
+      SupportedIdentityProviders:
+        - COGNITO
+        - Google
+      AllowedOAuthFlowsUserPoolClient: true
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_CUSTOM_AUTH
+        - ALLOW_USER_SRP_AUTH
+      AccessTokenValidity: 24
+      IdTokenValidity: 24
+      RefreshTokenValidity: 3650
+      TokenValidityUnits:
+        AccessToken: hours
+        IdToken: hours
+        RefreshToken: days
+  GoogleIdentityProvider:
+    Type: AWS::Cognito::UserPoolIdentityProvider
+    Properties:
+      ProviderName: Google
+      ProviderType: Google
+      UserPoolId: !Ref UserPool
+      AttributeMapping:
+        email: email
+        given_name: given_name
+        family_name: family_name
+        email_verified: email_verified
+        username: sub
+      ProviderDetails:
+        client_id: <google client id>
+        client_secret: <google client secret>
+        authorize_scopes: "profile email openid"
+  StarMateUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Sub "login.${DNS}"
+      ManagedLoginVersion: 2
+      UserPoolId: !Ref UserPool
+      CustomDomainConfig:
+        CertificateArn: !Ref SSL
+  UserPoolDomainAws:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: example
+      ManagedLoginVersion: 2
+      UserPoolId: !Ref UserPool
+  UserTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-user"
+      BillingMode: PAY_PER_REQUEST
+      DeletionProtectionEnabled: true
+      AttributeDefinitions:
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: email
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+  PaidTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-paid"
+      BillingMode: PAY_PER_REQUEST
+      DeletionProtectionEnabled: false
+      AttributeDefinitions:
+        - AttributeName: email
+          AttributeType: S
+        - AttributeName: hash
+          AttributeType: S
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      KeySchema:
+        - AttributeName: email
+          KeyType: HASH
+        - AttributeName: hash
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: hash
+          KeySchema:
+            - AttributeName: hash
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+Outputs:
+
+  UserPoolId:
+    Description: Cognito User Pool ID
+    Value: !Ref UserPool
+
+  UserPoolClientId:
+    Description: Cognito User Pool Client ID
+    Value: !Ref UserPoolClient
+
+  UserPoolArn:
+    Description: "Cognito User Pool Arn"
+    Value: !GetAtt UserPool.Arn
+    Export:
+      Name: UserPoolArn
+  
+  UserTableName:
+    Description: "User Table Name"
+    Value: !Ref UserTable
+    Export:
+      Name: UserTableName

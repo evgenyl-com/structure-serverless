@@ -1,0 +1,141 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Parameters:
+  BRANCH:
+    Type: String
+  REGION:
+    Type: String
+  BLOCK:
+    Type: String
+  IMAGE:
+    Type: String
+  DNSName:
+    Type: String
+  R53HostedZone:
+    Type: String
+  SSLCertificate:
+    Type: String
+
+Globals:
+  Function:
+    Timeout: 10
+    Tracing: Active
+    MemorySize: 512
+    Environment:
+      Variables:
+        ENV: AWS
+        REGION: !Ref REGION
+        BRANCH: !Ref BRANCH
+        BLOCK: !Ref BLOCK
+        USER_TABLE_NAME: !ImportValue UserTableName
+        BILLING_TABLE_NAME: !ImportValue BillingTableName
+
+  Api:
+    Cors:
+      AllowMethods: "'*'"
+      AllowHeaders: "'*'"
+      AllowOrigin: "'*'"
+Resources:
+  LambdaApiGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub "${AWS::StackName}"
+      DisableExecuteApiEndpoint: True
+      BinaryMediaTypes:
+      - image~1jpg
+      - image~1jpeg
+      - image~1png
+      StageName: prod
+      Auth:
+        DefaultAuthorizer: AuthCognitoAuth
+        Authorizers:
+          AuthCognitoAuth:
+            UserPoolArn: !ImportValue UserPoolArn
+            Identity:
+              Header: IdToken
+        AddDefaultAuthorizerToCorsPreflight: false
+  CustomDomainName:
+    Type: AWS::ApiGateway::DomainName
+    Properties:
+      DomainName: !Sub "${BLOCK}.${DNSName}"
+      CertificateArn: !Sub "${SSLCertificate}"
+  DomainBasePathMapping:
+    Type: AWS::ApiGateway::BasePathMapping
+    DependsOn: LambdaApiGateway
+    Properties:
+      DomainName: !Ref CustomDomainName
+      RestApiId: !Ref LambdaApiGateway
+      Stage: "prod"
+  DNSRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      Name: !Sub "${BLOCK}.${DNSName}"
+      HostedZoneId: !Sub "${R53HostedZone}"
+      Type: A
+      AliasTarget:
+        HostedZoneId: !GetAtt CustomDomainName.DistributionHostedZoneId
+        DNSName: !GetAtt CustomDomainName.DistributionDomainName
+  TimezonesLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "${AWS::StackName}-timezones"
+      RetentionInDays: 7
+  Timezones:
+    Type: AWS::Serverless::Function
+    Properties:
+      LoggingConfig:
+        ApplicationLogLevel: 'INFO'
+        LogGroup: !Ref TimezonesLogGroup
+        LogFormat: 'JSON'
+        SystemLogLevel: 'INFO'
+      FunctionName: !Sub "${AWS::StackName}-timezones"
+      PackageType: Image
+      ImageUri: !Ref IMAGE
+      ImageConfig:
+        Command: ["timezones.lambda_handler"]
+      Events:
+        ApiGateway:
+          Type: Api
+          Properties:
+            Path: /timezones
+            Method: post
+            RestApiId: !Ref LambdaApiGateway
+  UserLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "${AWS::StackName}-user"
+      RetentionInDays: 7
+  User:
+    Type: AWS::Serverless::Function
+    Properties:
+      LoggingConfig:
+        ApplicationLogLevel: 'INFO'
+        LogGroup: !Ref UserLogGroup
+        LogFormat: 'JSON'
+        SystemLogLevel: 'INFO'
+      FunctionName: !Sub "${AWS::StackName}-user"
+      PackageType: Image
+      ImageUri: !Ref IMAGE
+      ImageConfig:
+        Command: ["user.lambda_handler"]
+      Policies:
+        - Statement:
+          - Sid: KMS
+            Effect: Allow
+            Action:
+            - kms:decrypt
+            Resource: '*'
+        - Statement:
+          - Sid: DynamoDB
+            Effect: Allow
+            Action:
+            - dynamodb:*
+            Resource: '*'
+      Events:
+        ApiGateway:
+          Type: Api
+          Properties:
+            Path: /user
+            Method: post
+            RestApiId: !Ref LambdaApiGateway

@@ -76,31 +76,6 @@ Resources:
       AliasTarget:
         HostedZoneId: !GetAtt CustomDomainName.DistributionHostedZoneId
         DNSName: !GetAtt CustomDomainName.DistributionDomainName
-  TimezonesLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub "${AWS::StackName}-timezones"
-      RetentionInDays: 7
-  Timezones:
-    Type: AWS::Serverless::Function
-    Properties:
-      LoggingConfig:
-        ApplicationLogLevel: 'INFO'
-        LogGroup: !Ref TimezonesLogGroup
-        LogFormat: 'JSON'
-        SystemLogLevel: 'INFO'
-      FunctionName: !Sub "${AWS::StackName}-timezones"
-      PackageType: Image
-      ImageUri: !Ref IMAGE
-      ImageConfig:
-        Command: ["timezones.lambda_handler"]
-      Events:
-        ApiGateway:
-          Type: Api
-          Properties:
-            Path: /timezones
-            Method: post
-            RestApiId: !Ref LambdaApiGateway
   UserLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
